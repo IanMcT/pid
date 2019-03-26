@@ -1,0 +1,153 @@
+package frc.robot.systems;
+
+import com.revrobotics.CANSparkMax;
+import com.revrobotics.CANSparkMaxLowLevel.MotorType;
+
+import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
+import frc.robot.Robot;
+import frc.robot.util.Input;
+import frc.robot.util.ValueMap;
+
+public class ElevatorSystem extends RobotSystem{
+
+    
+
+    // Heights for hatches and cargo, represented as encoder units.
+    //(currently my best guess)
+    private static final int[] HATCH_HEIGHTS = {0, 2000, 3191};
+    private static final int[] CARGO_HEIGHTS = {0, 1170, 1702, 2362, 3553};
+
+    // Minimum time in milliseconds between consecutive accepted target changes (up/down presses).
+    private static final long MIN_CHANGE_WAIT_TIME = 100;
+
+    // Elevator percentage needed to maintain height.
+    private static final double BASE_HOVER_SPEED = 0.1; //adjust this
+
+    // Variables relating to the physical elevator.
+    private CANSparkMax elevator;
+    private double elevatorMotorSpeed;
+    private double elevatorVelocity;
+    private double elevatorPosition;
+
+    // Variables used to control elevator position.
+    private int targetIndex;
+    private boolean falling;
+    private boolean usingCargo;
+    private boolean lastChangeUsingCargo;
+    private long lastChangeTime;
+
+    public void init(){
+        elevator = new CANSparkMax(ValueMap.ELEVATOR, MotorType.kBrushless);
+        falling = usingCargo = lastChangeUsingCargo = true;
+    }
+
+    public void disabledPeriodic(){
+        usingCargo = lastChangeUsingCargo = true;
+        targetIndex = 0;
+        elevatorMotorSpeed = 0;
+        elevator.set(0);
+    }
+
+    public void enabledPeriodic(){
+        elevatorPosition = elevator.getEncoder().getPosition();
+        elevatorVelocity = elevator.getEncoder().getVelocity();
+
+        if(falling){
+            elevatorMotorSpeed = 0; // If we're falling, let gravity bring us down.
+            targetIndex = 0; // Reset this so when we reach the bottom we don't immediately go back up.
+
+            // We know we've stopped falling when velocity is zero.
+            if(elevatorVelocity == 0){
+                falling = false;
+                elevator.getEncoder().setPosition(0); // Reset encoder at bottom of elevator.
+            }
+        }else{
+            // Only accept raise/lower button presses if enough time has passed.
+            if(System.currentTimeMillis() - lastChangeTime >= MIN_CHANGE_WAIT_TIME){
+                if(Input.getPOV() == ValueMap.RAISE_ELEVATOR){
+                    usingCargo = Robot.hatchSystem.isLifted();
+                    lastChangeTime = System.currentTimeMillis();
+
+                    if(usingCargo == lastChangeUsingCargo){
+                        int maxValue = (usingCargo ? CARGO_HEIGHTS.length : HATCH_HEIGHTS.length) - 1;
+                        if(targetIndex < maxValue)
+                            targetIndex++;
+                    }else{
+                        if(usingCargo){
+                            // Convert from hatch index to cargo index (going up).
+                            if(targetIndex == 0)
+                                targetIndex += 1;
+                            else
+                                targetIndex += 2;
+                        }else{
+                            // Convert from cargo index to hatch index (going up).
+                            if(targetIndex <= 2)
+                                targetIndex = 1;
+                            else
+                                targetIndex = 2;
+                        }
+
+                        lastChangeUsingCargo = usingCargo;
+                    }
+                }else if(Input.getPOV() == ValueMap.LOWER_ELEVATOR){
+                    usingCargo = Robot.hatchSystem.isLifted();
+                    lastChangeTime = System.currentTimeMillis();
+
+                    if(usingCargo == lastChangeUsingCargo && targetIndex > 0){
+                        targetIndex--;
+                    }else{
+                        if(usingCargo){
+                            // Convert from hatch index to cargo index (going down).
+                            if(targetIndex != 0)
+                                targetIndex++;
+                        }else{
+                            // Convert from cargo index to hatch index (going down).
+                            if(targetIndex <= 2)
+                                targetIndex = 0;
+                            else
+                                targetIndex -= 2;
+                        }
+
+                        lastChangeUsingCargo = usingCargo;
+                    }
+                }
+            }
+
+            moveToPosition(usingCargo ? CARGO_HEIGHTS[targetIndex] : HATCH_HEIGHTS[targetIndex]);
+
+            if(Input.getRawButtonPressed(ValueMap.ZERO_ENCODER) || targetIndex == 0){
+                falling = true;
+                elevatorMotorSpeed = 0;
+            }
+        }
+
+        elevator.set(elevatorMotorSpeed);
+    }
+
+    public void alwaysPeriodic(){
+        SmartDashboard.putNumber("elevatorPosition", elevatorPosition);
+        SmartDashboard.putNumber("elevatorVelocity", elevatorVelocity);
+        SmartDashboard.putNumber("elevatorMotorSpeed", elevatorMotorSpeed);
+        SmartDashboard.putNumber("elevatorTargetIndex", targetIndex);
+    }
+
+    private void moveToPosition(double position){
+        final double p = position - elevatorPosition;
+        final double d = elevatorVelocity;
+
+        //make sure you find BASE_HOVER_SPEED first
+        //for setting actual values:
+        //set cd to 0 and cp very low
+        //raise cp until oscillating consistently around target
+        //raise cd until no more oscillation
+        final double cp = 0.01;
+        final double cd = 0;
+
+        elevatorMotorSpeed = (p * cp - d * cd) + BASE_HOVER_SPEED;
+
+        if(elevatorMotorSpeed > 1.0)
+            elevatorMotorSpeed = 1.0;
+        else if(elevatorMotorSpeed < -1.0)
+            elevatorMotorSpeed = -1.0;
+    }
+}
