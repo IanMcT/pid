@@ -160,8 +160,12 @@ public class ElevatorSystem extends RobotSystem{
         final double ci = 0;
         final double cd = 0.65;
 
+        //start by slowing down proporionaly from 15 inches out
+        if(Max(p) < 15){
         elevatorMotorSpeed = (p * cp) + (d * cd) + (i * ci) + BASE_HOVER_SPEED;
-        
+        }else{
+        elevatorMotorSpeed = 1;
+        }
         NumbOfCalls++;
         SmartDashboard.putNumber("Num of Calls", NumbOfCalls);
         SmartDashboard.putNumber("speed", elevatorMotorSpeed);
